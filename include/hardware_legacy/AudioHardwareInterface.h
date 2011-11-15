@@ -26,10 +26,17 @@
 #include <utils/String8.h>
 
 #include <media/IAudioFlinger.h>
-#include "media/AudioSystem.h"
+#include <hardware_legacy/AudioSystemLegacy.h>
 
+#include <system/audio.h>
+#include <hardware/audio.h>
 
-namespace android {
+#include <cutils/bitops.h>
+
+namespace android_audio_legacy {
+    using android::Vector;
+    using android::String16;
+    using android::String8;
 
 // ----------------------------------------------------------------------------
 
@@ -62,7 +69,7 @@ public:
     /**
      * return the frame size (number of bytes per sample).
      */
-    uint32_t    frameSize() const { return AudioSystem::popCount(channels())*((format()==AudioSystem::PCM_16_BIT)?sizeof(int16_t):sizeof(int8_t)); }
+    uint32_t    frameSize() const { return popcount(channels())*((format()==AUDIO_FORMAT_PCM_16_BIT)?sizeof(int16_t):sizeof(int8_t)); }
 
     /**
      * return the audio hardware driver latency in milli seconds.
@@ -165,6 +172,8 @@ public:
     // Unit: the number of input audio frames
     virtual unsigned int  getInputFramesLost() const = 0;
 
+    virtual status_t addAudioEffect(effect_handle_t effect) = 0;
+    virtual status_t removeAudioEffect(effect_handle_t effect) = 0;
 };
 
 /**

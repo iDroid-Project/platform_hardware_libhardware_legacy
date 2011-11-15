@@ -23,7 +23,8 @@
 #include <hardware_legacy/AudioPolicyInterface.h>
 
 
-namespace android {
+namespace android_audio_legacy {
+    using android::KeyedVector;
 
 // ----------------------------------------------------------------------------
 
@@ -32,14 +33,16 @@ namespace android {
 #define SONIFICATION_HEADSET_VOLUME_FACTOR 0.5
 // Min volume for STRATEGY_SONIFICATION streams when limited by music volume: -36dB
 #define SONIFICATION_HEADSET_VOLUME_MIN  0.016
-// Time in seconds during which we consider that music is still active after a music
+// Time in milliseconds during which we consider that music is still active after a music
 // track was stopped - see computeVolume()
-#define SONIFICATION_HEADSET_MUSIC_DELAY  5
+#define SONIFICATION_HEADSET_MUSIC_DELAY  5000
 // Time in milliseconds during witch some streams are muted while the audio path
 // is switched
 #define MUTE_TIME_MS 2000
 
 #define NUM_TEST_OUTPUTS 5
+
+#define NUM_VOL_CURVE_KNEES 2
 
 // ----------------------------------------------------------------------------
 // AudioPolicyManagerBase implements audio policy manager behavior common to all platforms.
@@ -71,6 +74,7 @@ public:
         virtual void setForceUse(AudioSystem::force_use usage, AudioSystem::forced_config config);
         virtual AudioSystem::forced_config getForceUse(AudioSystem::force_use usage);
         virtual void setSystemProperty(const char* property, const char* value);
+        virtual status_t initCheck();
         virtual audio_io_handle_t getOutput(AudioSystem::stream_type stream,
                                             uint32_t samplingRate = 0,
                                             uint32_t format = AudioSystem::FORMAT_DEFAULT,
@@ -103,13 +107,19 @@ public:
         // return the strategy corresponding to a given stream type
         virtual uint32_t getStrategyForStream(AudioSystem::stream_type stream);
 
+        // return the enabled output devices for the given stream type
+        virtual uint32_t getDevicesForStream(AudioSystem::stream_type stream);
+
         virtual audio_io_handle_t getOutputForEffect(effect_descriptor_t *desc);
         virtual status_t registerEffect(effect_descriptor_t *desc,
-                                        audio_io_handle_t output,
+                                        audio_io_handle_t io,
                                         uint32_t strategy,
                                         int session,
                                         int id);
         virtual status_t unregisterEffect(int id);
+        virtual status_t setEffectEnabled(int id, bool enabled);
+
+        virtual bool isStreamActive(int stream, uint32_t inPastMs = 0) const;
 
         virtual status_t dump(int fd);
 
@@ -120,8 +130,41 @@ protected:
             STRATEGY_PHONE,
             STRATEGY_SONIFICATION,
             STRATEGY_DTMF,
+            STRATEGY_ENFORCED_AUDIBLE,
             NUM_STRATEGIES
         };
+
+        // 4 points to define the volume attenuation curve, each characterized by the volume
+        // index (from 0 to 100) at which they apply, and the attenuation in dB at that index.
+        // we use 100 steps to avoid rounding errors when computing the volume in volIndexToAmpl()
+
+        enum { VOLMIN = 0, VOLKNEE1 = 1, VOLKNEE2 = 2, VOLMAX = 3, VOLCNT = 4};
+
+        class VolumeCurvePoint
+        {
+        public:
+            int mIndex;
+            float mDBAttenuation;
+        };
+
+        // device categories used for volume curve management.
+        enum device_category {
+            DEVICE_CATEGORY_HEADSET,
+            DEVICE_CATEGORY_SPEAKER,
+            DEVICE_CATEGORY_EARPIECE,
+            DEVICE_CATEGORY_CNT
+        };
+
+        // default volume curve
+        static const VolumeCurvePoint sDefaultVolumeCurve[AudioPolicyManagerBase::VOLCNT];
+        // default volume curve for media strategy
+        static const VolumeCurvePoint sDefaultMediaVolumeCurve[AudioPolicyManagerBase::VOLCNT];
+        // volume curve for media strategy on speakers
+        static const VolumeCurvePoint sSpeakerMediaVolumeCurve[AudioPolicyManagerBase::VOLCNT];
+        // volume curve for sonification strategy on speakers
+        static const VolumeCurvePoint sSpeakerSonificationVolumeCurve[AudioPolicyManagerBase::VOLCNT];
+        // default volume curves per strategy and device category. See initializeVolumeCurves()
+        static const VolumeCurvePoint *sVolumeProfiles[NUM_STRATEGIES][DEVICE_CATEGORY_CNT];
 
         // descriptor for audio outputs. Used to maintain current configuration of each opened audio output
         // and keep track of the usage of this output by each audio stream type.
@@ -147,6 +190,7 @@ protected:
             AudioSystem::output_flags mFlags;   //
             uint32_t mDevice;                   // current device this output is routed to
             uint32_t mRefCount[AudioSystem::NUM_STREAM_TYPES]; // number of streams of each type using this output
+            nsecs_t mStopTime[AudioSystem::NUM_STREAM_TYPES];
             AudioOutputDescriptor *mOutput1;    // used by duplicated outputs: first output
             AudioOutputDescriptor *mOutput2;    // used by duplicated outputs: second output
             float mCurVolume[AudioSystem::NUM_STREAM_TYPES];   // current stream volume
@@ -184,6 +228,8 @@ protected:
             int mIndexMax;      // max volume index
             int mIndexCur;      // current volume index
             bool mCanBeMuted;   // true is the stream can be muted
+
+            const VolumeCurvePoint *mVolumeCurve[DEVICE_CATEGORY_CNT];
         };
 
         // stream descriptor used for volume control
@@ -193,10 +239,11 @@ protected:
 
             status_t dump(int fd);
 
-            int mOutput;                // output the effect is attached to
+            int mIo;                // io the effect is attached to
             routing_strategy mStrategy; // routing strategy the effect is associated to
             int mSession;               // audio session the effect is on
             effect_descriptor_t mDesc;  // effect descriptor
+            bool mEnabled;              // enabled state: CPU load being used or not
         };
 
         void addOutput(audio_io_handle_t id, AudioOutputDescriptor *outputDesc);
@@ -220,13 +267,15 @@ protected:
         virtual uint32_t getDeviceForInputSource(int inputSource);
         // return io handle of active input or 0 if no input is active
         audio_io_handle_t getActiveInput();
+        // initialize volume curves for each strategy and device category
+        void initializeVolumeCurves();
         // compute the actual volume for a given stream according to the requested index and a particular
         // device
         virtual float computeVolume(int stream, int index, audio_io_handle_t output, uint32_t device);
         // check that volume change is permitted, compute and send new volume to audio hardware
         status_t checkAndSetVolume(int stream, int index, audio_io_handle_t output, uint32_t device, int delayMs = 0, bool force = false);
         // apply all stream volumes to the specified output and device
-        void applyStreamVolumes(audio_io_handle_t output, uint32_t device, int delayMs = 0);
+        void applyStreamVolumes(audio_io_handle_t output, uint32_t device, int delayMs = 0, bool force = false);
         // Mute or unmute all streams handled by the specified strategy on the specified output
         void setStrategyMute(routing_strategy strategy, bool on, audio_io_handle_t output, int delayMs = 0);
         // Mute or unmute the stream on the specified output
@@ -287,6 +336,11 @@ protected:
         int testOutputIndex(audio_io_handle_t output);
 #endif //AUDIO_POLICY_TEST
 
+        status_t setEffectEnabled(EffectDescriptor *pDesc, bool enabled);
+
+        // returns the category the device belongs to with regard to volume curve management
+        static device_category getDeviceCategory(uint32_t device);
+
         AudioPolicyClientInterface *mpClientInterface;  // audio policy client interface
         audio_io_handle_t mHardwareOutput;              // hardware output handler
         audio_io_handle_t mA2dpOutput;                  // A2DP output handler
@@ -303,7 +357,6 @@ protected:
         StreamDescriptor mStreams[AudioSystem::NUM_STREAM_TYPES];           // stream descriptors for volume control
         String8 mA2dpDeviceAddress;                                         // A2DP device MAC address
         String8 mScoDeviceAddress;                                          // SCO device MAC address
-        nsecs_t mMusicStopTime;                                             // time when last music stream was stopped
         bool    mLimitRingtoneVolume;                                       // limit ringtone volume to music volume if headset connected
         uint32_t mDeviceForStrategy[NUM_STRATEGIES];
         float   mLastVoiceVolume;                                           // last voice volume value sent to audio HAL
@@ -331,6 +384,10 @@ protected:
         uint32_t        mTestChannels;
         uint32_t        mTestLatencyMs;
 #endif //AUDIO_POLICY_TEST
+
+private:
+        static float volIndexToAmpl(uint32_t device, const StreamDescriptor& streamDesc,
+                int indexInUi);
 };
 
 };
