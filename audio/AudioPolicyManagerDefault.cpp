@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008 The Android Open Source Project
+ * Copyright (C) 2009 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,20 +14,21 @@
  * limitations under the License.
  */
 
-#include <hardware_legacy/uevent.h>
-#include <unistd.h>
+#define LOG_TAG "AudioPolicyManagerDefault"
+//#define LOG_NDEBUG 0
 
-int uevent_init()
+#include "AudioPolicyManagerDefault.h"
+
+namespace android_audio_legacy {
+
+extern "C" AudioPolicyInterface* createAudioPolicyManager(AudioPolicyClientInterface *clientInterface)
 {
-    return 1;
+    return new AudioPolicyManagerDefault(clientInterface);
 }
 
-int uevent_next_event(char* buffer, int buffer_length)
+extern "C" void destroyAudioPolicyManager(AudioPolicyInterface *interface)
 {
-    while (1) {
-        sleep(10000);
-    }
-    
-    // won't get here
-    return 0;
+    delete interface;
 }
+
+}; // namespace android

@@ -36,11 +36,26 @@ int wifi_load_driver();
 int wifi_unload_driver();
 
 /**
+ * Check if the Wi-Fi driver is loaded.
+ *
+ * @return 0 on success, < 0 on failure.
+ */
+int is_wifi_driver_loaded();
+
+
+/**
  * Start supplicant.
  *
  * @return 0 on success, < 0 on failure.
  */
 int wifi_start_supplicant();
+
+/**
+ * Start supplicant for p2p operation.
+ *
+ * @return 0 on success, < 0 on failure.
+ */
+int wifi_start_p2p_supplicant();
 
 /**
  * Stop supplicant.
@@ -163,6 +178,25 @@ int do_dhcp_request(int *ipaddr, int *gateway, int *mask,
  * Return the error string of the last do_dhcp_request().
  */
 const char *get_dhcp_error_string();
+
+/**
+ * Return the path to requested firmware
+ */
+#define WIFI_GET_FW_PATH_STA	0
+#define WIFI_GET_FW_PATH_AP	1
+#define WIFI_GET_FW_PATH_P2P	2
+const char *wifi_get_fw_path(int fw_type);
+
+/**
+ * Change the path to firmware for the wlan driver
+ */
+int wifi_change_fw_path(const char *fwpath);
+
+/**
+ * Check and create if necessary initial entropy file
+ */
+#define WIFI_ENTROPY_FILE	"/data/misc/wifi/entropy.bin"
+int ensure_entropy_file_exists();
 
 #if __cplusplus
 };  // extern "C"
